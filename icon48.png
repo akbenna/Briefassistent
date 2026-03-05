@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<title>AVG Verantwoording — Huisarts Brief Assistent</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,600;1,300&family=DM+Mono:wght@300;400&family=DM+Sans:wght@300;400;500&display=swap');
+
+:root {
+  --bg:#f5f2ec; --s1:#fdfaf6; --s2:#eceae3; --border:#d2cec5;
+  --ink:#1a1814; --muted:#7a7568;
+  --green:#1a5c38; --green-bg:rgba(26,92,56,.07); --green-border:rgba(26,92,56,.25);
+  --red:#b83a26; --red-bg:rgba(184,58,38,.07); --red-border:rgba(184,58,38,.25);
+  --amber:#92600a; --amber-bg:rgba(146,96,10,.07); --amber-border:rgba(146,96,10,.25);
+  --blue:#1a4a8a; --blue-bg:rgba(26,74,138,.07); --blue-border:rgba(26,74,138,.25);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--ink);font-family:'DM Sans',sans-serif;font-weight:300;font-size:13.5px;line-height:1.7;max-width:640px;margin:0 auto;padding:2.5rem 1.5rem 4rem;}
+
+/* Header */
+.page-header{border-bottom:2px solid var(--ink);padding-bottom:1.25rem;margin-bottom:2rem;}
+.page-header h1{font-family:'Fraunces',serif;font-size:1.9rem;font-weight:300;letter-spacing:-.02em;line-height:1.1;margin-bottom:.4rem;}
+.page-header h1 em{font-style:italic;color:var(--green);}
+.page-header p{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;}
+
+/* Sections */
+h2{font-family:'Fraunces',serif;font-size:1.1rem;font-weight:600;margin:2rem 0 .75rem;display:flex;align-items:center;gap:.6rem;}
+h2 .ico{font-size:1rem;}
+h3{font-family:'DM Mono',monospace;font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:1.25rem 0 .5rem;}
+
+p{margin-bottom:.75rem;}
+a{color:var(--green);}
+
+/* Status cards */
+.status-grid{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:1.25rem;}
+@media(max-width:480px){.status-grid{grid-template-columns:1fr;}}
+.status-card{border-radius:8px;padding:.9rem 1rem;}
+.status-card.green{background:var(--green-bg);border:1px solid var(--green-border);}
+.status-card.amber{background:var(--amber-bg);border:1px solid var(--amber-border);}
+.status-card.red{background:var(--red-bg);border:1px solid var(--red-border);}
+.status-card.blue{background:var(--blue-bg);border:1px solid var(--blue-border);}
+.sc-label{font-family:'DM Mono',monospace;font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;margin-bottom:.3rem;}
+.sc-label.green{color:var(--green);}
+.sc-label.amber{color:var(--amber);}
+.sc-label.red{color:var(--red);}
+.sc-label.blue{color:var(--blue);}
+.sc-title{font-size:.85rem;font-weight:400;margin-bottom:.2rem;}
+.sc-body{font-size:.78rem;color:var(--muted);line-height:1.55;}
+
+/* Data flow diagram */
+.flow{background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:1.25rem;margin:1rem 0;}
+.flow-title{font-family:'DM Mono',monospace;font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:1rem;}
+.flow-steps{display:flex;flex-direction:column;gap:.5rem;}
+.flow-step{display:flex;align-items:flex-start;gap:.75rem;}
+.flow-step .fs-num{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:.68rem;flex-shrink:0;margin-top:.1rem;}
+.flow-step .fs-num.green{background:var(--green-bg);border:1px solid var(--green-border);color:var(--green);}
+.flow-step .fs-num.amber{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber);}
+.flow-step .fs-num.block{background:var(--red-bg);border:1px solid var(--red-border);color:var(--red);}
+.flow-step .fs-content{}
+.flow-step .fs-title{font-size:.85rem;font-weight:400;}
+.flow-step .fs-sub{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted);margin-top:.1rem;}
+.flow-arrow{text-align:center;font-size:.75rem;color:var(--muted);margin:.1rem 0 .1rem 11px;font-family:'DM Mono',monospace;}
+
+/* Checklist */
+.checklist{display:flex;flex-direction:column;gap:.5rem;margin:.75rem 0 1.25rem;}
+.check-item{display:flex;align-items:flex-start;gap:.6rem;padding:.65rem .9rem;border-radius:7px;}
+.check-item.ok{background:var(--green-bg);border:1px solid var(--green-border);}
+.check-item.warn{background:var(--amber-bg);border:1px solid var(--amber-border);}
+.check-item.action{background:var(--blue-bg);border:1px solid var(--blue-border);}
+.check-icon{font-size:.9rem;flex-shrink:0;margin-top:.05rem;}
+.check-text{font-size:.82rem;line-height:1.55;}
+.check-text strong{font-weight:500;display:block;margin-bottom:.1rem;}
+.check-text.ok strong{color:var(--green);}
+.check-text.warn strong{color:var(--amber);}
+.check-text.action strong{color:var(--blue);}
+
+/* DPA box */
+.dpa-box{background:var(--blue-bg);border:1px solid var(--blue-border);border-radius:8px;padding:1rem 1.1rem;margin:1rem 0;}
+.dpa-box h4{font-family:'DM Mono',monospace;font-size:.72rem;letter-spacing:.07em;text-transform:uppercase;color:var(--blue);margin-bottom:.5rem;}
+.dpa-box ol{padding-left:1.25rem;font-size:.82rem;line-height:1.8;}
+.dpa-box a{color:var(--blue);}
+
+/* Garantie stempel */
+.garantie-stamp{background:var(--s1);border:2px solid var(--green);border-radius:10px;padding:1.25rem 1.5rem;margin:2rem 0 1rem;text-align:center;}
+.gs-label{font-family:'DM Mono',monospace;font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--green);margin-bottom:.5rem;}
+.gs-title{font-family:'Fraunces',serif;font-size:1.3rem;font-weight:600;color:var(--green);margin-bottom:.4rem;}
+.gs-items{display:flex;flex-wrap:wrap;justify-content:center;gap:.4rem;margin-top:.75rem;}
+.gs-chip{font-family:'DM Mono',monospace;font-size:.68rem;background:var(--green-bg);border:1px solid var(--green-border);color:var(--green);padding:.25rem .65rem;border-radius:3px;}
+
+/* Technische tabel */
+.tech-table{width:100%;border-collapse:collapse;font-size:.8rem;margin:.75rem 0 1.25rem;}
+.tech-table th{font-family:'DM Mono',monospace;font-size:.68rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);text-align:left;padding:.5rem .75rem;border-bottom:1px solid var(--border);}
+.tech-table td{padding:.55rem .75rem;border-bottom:1px solid var(--border);vertical-align:top;}
+.tech-table tr:last-child td{border-bottom:none;}
+.tech-table td:first-child{font-weight:400;width:40%;}
+.pill{display:inline-block;font-family:'DM Mono',monospace;font-size:.65rem;padding:.15rem .5rem;border-radius:3px;}
+.pill.green{background:var(--green-bg);border:1px solid var(--green-border);color:var(--green);}
+.pill.amber{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber);}
+.pill.red{background:var(--red-bg);border:1px solid var(--red-border);color:var(--red);}
+
+footer{margin-top:3rem;border-top:1px solid var(--border);padding-top:1rem;font-family:'DM Mono',monospace;font-size:.68rem;color:var(--muted);text-align:center;line-height:1.8;}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>AVG <em>Verantwoording</em></h1>
+  <p>Huisarts Brief Assistent · Privacygaranties · Versie 3.0</p>
+</div>
+
+<!-- STATUS OVERZICHT -->
+<h2><span class="ico">📋</span> Statusoverzicht</h2>
+<div class="status-grid">
+  <div class="status-card green">
+    <div class="sc-label green">✓ Geregeld</div>
+    <div class="sc-title">Geen lokale opslag</div>
+    <div class="sc-body">Patiëntdata verdwijnt bij sluiten. Niets in cookies, cache of extensie-opslag.</div>
+  </div>
+  <div class="status-card green">
+    <div class="sc-label green">✓ Geregeld</div>
+    <div class="sc-title">Naam nooit verstuurd</div>
+    <div class="sc-body">Volledige naam wordt geblokkeerd. Alleen initialen gaan mee naar de AI.</div>
+  </div>
+  <div class="status-card green">
+    <div class="sc-label green">✓ Geregeld</div>
+    <div class="sc-title">U heeft volledige controle</div>
+    <div class="sc-body">Per sectie aan/uit. Preview toont exact wat verstuurd wordt vóór verzending.</div>
+  </div>
+  <div class="status-card amber">
+    <div class="sc-label amber">⚠ Actie vereist</div>
+    <div class="sc-title">DPA ondertekenen</div>
+    <div class="sc-body">Verwerkersovereenkomst met Anthropic is AVG-vereiste. Zie instructie hieronder.</div>
+  </div>
+</div>
+
+<!-- DATASTROOMDIAGRAM -->
+<h2><span class="ico">🔄</span> Wat gebeurt er met de data?</h2>
+<div class="flow">
+  <div class="flow-title">Datastroom per handeling</div>
+  <div class="flow-steps">
+
+    <div class="flow-step">
+      <div class="fs-num green">1</div>
+      <div class="fs-content">
+        <div class="fs-title">Bricks dossier wordt gelezen</div>
+        <div class="fs-sub">Content script leest tekst van het scherm. Data blijft in geheugen van uw browser. Geen netwerk.</div>
+      </div>
+    </div>
+    <div class="flow-arrow">↓</div>
+
+    <div class="flow-step">
+      <div class="fs-num block">✕</div>
+      <div class="fs-content">
+        <div class="fs-title">Privacy filter wordt toegepast</div>
+        <div class="fs-sub">Naam → initialen · BSN → [BSN] · Geboortedatum → [DATUM] · Tel/email/postcode → gefilterd</div>
+      </div>
+    </div>
+    <div class="flow-arrow">↓</div>
+
+    <div class="flow-step">
+      <div class="fs-num green">2</div>
+      <div class="fs-content">
+        <div class="fs-title">U ziet de preview — u beslist</div>
+        <div class="fs-sub">Klik "Toon" om precies te zien wat verstuurd wordt. Zet secties uit die u niet wilt delen.</div>
+      </div>
+    </div>
+    <div class="flow-arrow">↓</div>
+
+    <div class="flow-step">
+      <div class="fs-num amber">3</div>
+      <div class="fs-content">
+        <div class="fs-title">Gefilterde tekst → Anthropic API</div>
+        <div class="fs-sub">Versleuteld (TLS). Anthropic is verwerker onder uw DPA. Geen training op API-data. Geen permanente opslag.</div>
+      </div>
+    </div>
+    <div class="flow-arrow">↓</div>
+
+    <div class="flow-step">
+      <div class="fs-num green">4</div>
+      <div class="fs-content">
+        <div class="fs-title">Brief teruggestuurd → u kopieert</div>
+        <div class="fs-sub">Resultaat staat alleen in het popup-venster. Verdwijnt bij sluiten. Nooit opgeslagen.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- AVG CHECKLIST -->
+<h2><span class="ico">⚖️</span> AVG-checklist</h2>
+<div class="checklist">
+
+  <div class="check-item ok">
+    <span class="check-icon">✅</span>
+    <div class="check-text ok">
+      <strong>Geen opslag van bijzondere persoonsgegevens</strong>
+      Data leeft uitsluitend in het werkgeheugen (RAM) van uw browser tijdens de sessie. Niets wordt weggeschreven naar schijf, cookie of extensie-storage.
+    </div>
+  </div>
+
+  <div class="check-item ok">
+    <span class="check-icon">✅</span>
+    <div class="check-text ok">
+      <strong>Minimale gegevensverwerking (dataminimalisatie — art. 5 lid 1c)</strong>
+      Alleen de secties die u zelf aanvinkt worden verstuurd. Naam wordt altijd gereduceerd tot initialen.
+    </div>
+  </div>
+
+  <div class="check-item ok">
+    <span class="check-icon">✅</span>
+    <div class="check-text ok">
+      <strong>Transparantie richting uzelf (art. 5 lid 1a)</strong>
+      Preview-functie toont letterlijk wat verstuurd wordt. Geen verborgen verwerking.
+    </div>
+  </div>
+
+  <div class="check-item ok">
+    <span class="check-icon">✅</span>
+    <div class="check-text ok">
+      <strong>Beveiliging van de overdracht (art. 32)</strong>
+      Verbinding naar Anthropic API verloopt uitsluitend via HTTPS/TLS 1.3. Uw API-sleutel staat lokaal in Chrome/Edge encrypted storage.
+    </div>
+  </div>
+
+  <div class="check-item warn">
+    <span class="check-icon">⚠️</span>
+    <div class="check-text warn">
+      <strong>Internationale doorgifte (art. 44–49) — aandachtspunt</strong>
+      Anthropic is gevestigd in de VS. Doorgifte is toegestaan via Standard Contractual Clauses (SCCs) die Anthropic hanteert. Documenteer dit in uw verwerkingsregister.
+    </div>
+  </div>
+
+  <div class="check-item warn">
+    <span class="check-icon">⚠️</span>
+    <div class="check-text warn">
+      <strong>Indirect herleidbaar — bewust risico</strong>
+      Zelfs zonder naam kan een combinatie van zeldzame diagnose + initialen + leeftijdscategorie theoretisch herleidbaar zijn. Dit risico is vergelijkbaar met elk ander medisch correspondentiesysteem.
+    </div>
+  </div>
+
+  <div class="check-item action">
+    <span class="check-icon">📋</span>
+    <div class="check-text action">
+      <strong>Verwerkersovereenkomst (art. 28) — actie vereist</strong>
+      U moet eenmalig de Anthropic DPA accepteren. Zie instructie hieronder. Dit is een standaarddocument, vergelijkbaar met uw DPA met Microsoft of Google.
+    </div>
+  </div>
+
+</div>
+
+<!-- DPA INSTRUCTIE -->
+<h2><span class="ico">📄</span> Verwerkersovereenkomst (DPA) — eenmalige actie</h2>
+<div class="dpa-box">
+  <h4>Stap-voor-stap: DPA accepteren bij Anthropic</h4>
+  <ol>
+    <li>Ga naar <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></li>
+    <li>Log in met uw account</li>
+    <li>Ga naar <strong>Settings → Privacy & Legal</strong></li>
+    <li>Klik op <strong>"Data Processing Addendum"</strong></li>
+    <li>Vul uw naam en praktijkgegevens in → accepteer</li>
+    <li>Sla de bevestigingsmail op voor uw dossier</li>
+  </ol>
+  <p style="margin-top:.75rem;font-size:.8rem;color:var(--muted)">
+    Directe link naar het document:
+    <a href="https://www.anthropic.com/legal/dpa" target="_blank">anthropic.com/legal/dpa</a>
+  </p>
+</div>
+
+<!-- TECHNISCHE GARANTIES -->
+<h2><span class="ico">🔧</span> Technische garanties</h2>
+<table class="tech-table">
+  <tr><th>Aspect</th><th>Implementatie</th><th>Status</th></tr>
+  <tr>
+    <td>Lokale opslag patiëntdata</td>
+    <td>Geen — alleen RAM tijdens sessie</td>
+    <td><span class="pill green">Gegarandeerd</span></td>
+  </tr>
+  <tr>
+    <td>Naam in API-verzoek</td>
+    <td>Onmogelijk — code vervangt altijd vóór verzending</td>
+    <td><span class="pill green">Gegarandeerd</span></td>
+  </tr>
+  <tr>
+    <td>BSN in API-verzoek</td>
+    <td>Regex filter — vervangt door [BSN]</td>
+    <td><span class="pill green">Gegarandeerd</span></td>
+  </tr>
+  <tr>
+    <td>Geboortedatum in API-verzoek</td>
+    <td>Regex filter — vervangt door [DATUM]</td>
+    <td><span class="pill green">Gegarandeerd</span></td>
+  </tr>
+  <tr>
+    <td>Data naar derden (niet Anthropic)</td>
+    <td>Geen andere verbindingen in de code</td>
+    <td><span class="pill green">Gegarandeerd</span></td>
+  </tr>
+  <tr>
+    <td>Anthropic training op uw data</td>
+    <td>Uitgesloten via API-beleid + DPA</td>
+    <td><span class="pill green">Contractueel</span></td>
+  </tr>
+  <tr>
+    <td>Atypische namen zonder aanhef</td>
+    <td>Regex detecteert niet 100% — residurisico</td>
+    <td><span class="pill amber">Beperkt risico</span></td>
+  </tr>
+  <tr>
+    <td>Indirecte herleidbaarheid</td>
+    <td>Niet volledig uitsluitbaar</td>
+    <td><span class="pill amber">Bewust risico</span></td>
+  </tr>
+</table>
+
+<!-- GARANTIESTEMPEL -->
+<div class="garantie-stamp">
+  <div class="gs-label">Samenvatting privacygaranties</div>
+  <div class="gs-title">Wat deze extensie u garandeert</div>
+  <p style="font-size:.85rem;color:var(--muted);margin:.5rem 0 0">
+    Geen enkele patiëntdata wordt opgeslagen, gedeeld of hergebruikt.<br>
+    U ziet en beheert precies wat de AI ontvangt.
+  </p>
+  <div class="gs-items">
+    <span class="gs-chip">Geen opslag</span>
+    <span class="gs-chip">Geen naam</span>
+    <span class="gs-chip">Geen BSN</span>
+    <span class="gs-chip">Geen geboortedatum</span>
+    <span class="gs-chip">Geen derden</span>
+    <span class="gs-chip">U bepaalt wat er naartoe gaat</span>
+    <span class="gs-chip">Preview vóór verzending</span>
+    <span class="gs-chip">Versleuteld transport</span>
+  </div>
+</div>
+
+<footer>
+  Huisarts Brief Assistent v3.0 · Privacydocumentatie<br>
+  Bewaar dit document in uw verwerkingsregister (AVG art. 30)<br>
+  Combineer met getekende Anthropic DPA voor volledige compliance
+</footer>
+
+</body>
+</html>

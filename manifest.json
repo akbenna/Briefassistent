@@ -1,0 +1,678 @@
+// popup.js v4 — Fixed PDF, screenshot input, betere Bricks scraping
+
+// ── PDF.js worker via extensie URL ───────────────────────────
+// KRITIEKE FIX: worker moet via chrome-extension:// URL geladen worden
+if (typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('pdfjs/pdf.worker.min.js');
+}
+
+// ── State ─────────────────────────────────────────────────────
+const state = {
+  // Dossier
+  rawSecties: {},
+  patiëntNaamRauw: '',
+  initialen: '',
+  sectieAan: {},
+  dossierBron: null, // 'bricks' | 'screenshot' | 'pdf'
+  // Screenshot
+  screenshotDataUrl: null,
+  screenshotAnalysed: false,
+  // Vraag
+  vraagText: null,
+  vraagFileName: null,
+  // Instellingen
+  selectedType: 'advocaat',
+};
+
+// ── Init ──────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  await checkBricks();
+  await loadApiKeyStatus();
+  setupScreenshotPaste();
+});
+
+// ── Bricks check ──────────────────────────────────────────────
+async function checkBricks() {
+  const badge = document.getElementById('statusBadge');
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) { badge.textContent = '⬤ Geen tab'; badge.className = 'badge off'; return; }
+
+    const isBricks = tab.url && (
+      tab.url.includes('brickshuisarts') ||
+      tab.url.includes('bricks-his') ||
+      tab.url.includes('bricks.')
+    );
+
+    if (!isBricks) {
+      badge.textContent = '⬤ Geen Bricks';
+      badge.className = 'badge off';
+      document.getElementById('notBricks').style.display = 'block';
+      return;
+    }
+
+    // Ping content script
+    chrome.tabs.sendMessage(tab.id, { action: 'ping' }, (resp) => {
+      if (chrome.runtime.lastError) {
+        // Content script nog niet geladen — inject het nu
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content.js']
+        }, () => {
+          badge.textContent = '⬤ Bricks (herlaad)';
+          badge.className = 'badge on';
+        });
+      } else if (resp?.ok) {
+        badge.textContent = '⬤ Bricks verbonden';
+        badge.className = 'badge on';
+      }
+    });
+  } catch(e) {
+    badge.textContent = '⬤ Fout';
+    badge.className = 'badge off';
+  }
+}
+
+// ── Tab wisselen ──────────────────────────────────────────────
+function switchTab(tab) {
+  ['bricks','screenshot','pdf-dossier'].forEach(t => {
+    document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+    document.getElementById('pane-' + t).style.display = t === tab ? 'block' : 'none';
+  });
+}
+
+// ── BRICKS SCRAPEN ────────────────────────────────────────────
+async function scrapeDossier() {
+  const btn = document.getElementById('scrapeBtn');
+  const debugEl = document.getElementById('scrapeDebug');
+  btn.disabled = true;
+  btn.textContent = '⏳ Bezig...';
+  debugEl.style.display = 'none';
+  clearError();
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) { showError('Geen actieve tab gevonden.'); btn.disabled=false; btn.textContent='↓ Ophalen uit Bricks'; return; }
+
+    // Probeer eerst via message, dan via scripting.executeScript
+    const tryMessage = () => new Promise((resolve) => {
+      chrome.tabs.sendMessage(tab.id, { action: 'scrapeDossier' }, (resp) => {
+        if (chrome.runtime.lastError) resolve(null);
+        else resolve(resp);
+      });
+    });
+
+    const tryInject = () => new Promise((resolve) => {
+      chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          // Inline scraper als content script niet beschikbaar is
+          function extractText(el) {
+            const clone = el.cloneNode(true);
+            clone.querySelectorAll('button,input,svg,script,style,nav').forEach(e=>e.remove());
+            return (clone.innerText||clone.textContent||'').replace(/\t+/g,' ').replace(/ {3,}/g,'  ').replace(/\n{4,}/g,'\n\n').trim();
+          }
+          const body = document.body;
+          const tekst = extractText(body).substring(0, 12000);
+          const h1 = document.querySelector('h1,h2');
+          return {
+            secties: { 'Dossier (volledig)': tekst },
+            patiëntNaamRauw: h1 ? h1.textContent.trim() : '',
+            url: window.location.href
+          };
+        }
+      }, (results) => {
+        if (chrome.runtime.lastError || !results?.[0]) resolve(null);
+        else resolve(results[0].result);
+      });
+    });
+
+    let resp = await tryMessage();
+
+    if (!resp || Object.values(resp.secties||{}).join('').length < 30) {
+      // Inject content script en probeer opnieuw
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+      await new Promise(r => setTimeout(r, 500));
+      resp = await tryMessage();
+    }
+
+    if (!resp || Object.values(resp.secties||{}).join('').length < 30) {
+      // Laatste fallback: inline scraper
+      resp = await tryInject();
+    }
+
+    if (!resp || Object.values(resp.secties||{}).join('').length < 10) {
+      debugEl.style.display = 'block';
+      debugEl.textContent = 'Weinig tekst gevonden op: ' + (resp?.url||'onbekend') +
+        '\n\nTip: Zorg dat het dossier volledig geladen is en klik door alle tabs (Journaal, Medicatie, VG, Lab) voordat u ophaalt.';
+      showError('Weinig tekst gevonden. Zie tip hieronder.');
+      btn.disabled=false; btn.textContent='↓ Ophalen uit Bricks'; return;
+    }
+
+    state.rawSecties = resp.secties || {};
+    state.patiëntNaamRauw = resp.patiëntNaamRauw || '';
+    state.initialen = berekenInitialen(state.patiëntNaamRauw);
+    state.dossierBron = 'bricks';
+
+    // Standaard: bekende medische secties aan
+    const standaardAan = ['journaal','medicatie','voorgeschied','lab'];
+    state.sectieAan = {};
+    for (const s of Object.keys(state.rawSecties)) {
+      state.sectieAan[s] = standaardAan.some(kw => s.toLowerCase().includes(kw)) ||
+                           Object.keys(state.rawSecties).length <= 2;
+    }
+
+    // UI updaten
+    document.getElementById('scrapeIdle').style.display = 'none';
+    document.getElementById('scrapeDone').style.display = 'block';
+    const totChars = Object.values(state.rawSecties).join('').length;
+    document.getElementById('scrapeMeta').textContent =
+      Object.keys(state.rawSecties).join(' · ') + '\n' + Math.round(totChars/1000) + 'k tekens';
+    document.getElementById('clearScrapeBtn').style.display = 'block';
+    btn.textContent = '↓ Opnieuw ophalen';
+
+    bouwTransparantiePaneel();
+    clearError();
+
+  } catch(e) {
+    showError('Fout bij ophalen: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function clearDossier() {
+  state.rawSecties = {}; state.patiëntNaamRauw = ''; state.initialen = ''; state.sectieAan = {};
+  state.screenshotDataUrl = null; state.screenshotAnalysed = false;
+  document.getElementById('scrapeIdle').style.display = 'block';
+  document.getElementById('scrapeDone').style.display = 'none';
+  document.getElementById('transparantiePaneel').style.display = 'none';
+  document.getElementById('clearScrapeBtn').style.display = 'none';
+  document.getElementById('scrapeBtn').textContent = '↓ Ophalen uit Bricks';
+  document.getElementById('scrapeDebug').style.display = 'none';
+  clearScreenshot();
+}
+
+// ── SCREENSHOT ────────────────────────────────────────────────
+function setupScreenshotPaste() {
+  const area = document.getElementById('screenshotArea');
+  area.addEventListener('click', () => area.focus());
+  area.setAttribute('tabindex', '0');
+
+  document.addEventListener('paste', (e) => {
+    // Alleen als screenshot tab actief is
+    if (document.getElementById('pane-screenshot').style.display === 'none') return;
+
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const blob = item.getAsFile();
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          state.screenshotDataUrl = ev.target.result;
+          state.screenshotAnalysed = false;
+
+          // Toon preview
+          const preview = document.getElementById('screenshotPreview');
+          preview.innerHTML = `<img src="${ev.target.result}" style="max-width:100%;max-height:200px;border-radius:5px;margin-top:8px">`;
+
+          document.getElementById('analyseScreenshotBtn').style.display = 'block';
+          document.getElementById('clearScreenshotBtn').style.display = 'block';
+          document.getElementById('screenshotStatus').textContent = '✓ Screenshot geplakt — klik Analyseer';
+        };
+        reader.readAsDataURL(blob);
+        e.preventDefault();
+        return;
+      }
+    }
+  });
+}
+
+async function analyseScreenshot() {
+  if (!state.screenshotDataUrl) return;
+
+  const btn = document.getElementById('analyseScreenshotBtn');
+  const status = document.getElementById('screenshotStatus');
+  btn.disabled = true;
+  btn.textContent = '⏳ Analyseren...';
+  status.textContent = 'AI leest het scherm...';
+  clearError();
+
+  const { apiKey } = await new Promise(r => chrome.storage.local.get('apiKey', r));
+  if (!apiKey) { showError('Stel eerst uw API sleutel in.'); btn.disabled=false; btn.textContent='🔍 Analyseer screenshot'; return; }
+
+  try {
+    // Stuur screenshot naar Claude Vision
+    const base64 = state.screenshotDataUrl.split(',')[1];
+    const mediaType = state.screenshotDataUrl.match(/data:([^;]+)/)?.[1] || 'image/png';
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 3000,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: mediaType, data: base64 }
+            },
+            {
+              type: 'text',
+              text: `Dit is een screenshot van een medisch dossier systeem (Bricks HIS).
+Extraheer alle medische informatie die zichtbaar is en structureer het per sectie.
+Gebruik deze secties waar van toepassing: Journaal, Medicatie, Voorgeschiedenis, Lab, Metingen, Allergieën, Correspondentie.
+Schrijf alle tekst letterlijk over zoals zichtbaar, inclusief datums, ICPC-codes, medicatienamen en doseringen.
+Laat GEEN informatie weg. Geef de output als platte tekst per sectie.`
+            }
+          ]
+        }]
+      })
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(()=>({}));
+      throw new Error(err.error?.message || `API fout ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    const tekst = data.content.map(b => b.text||'').join('\n');
+
+    // Parseer secties uit de AI output
+    const secties = {};
+    const sectieTitels = ['Journaal','Medicatie','Voorgeschiedenis','Lab','Metingen','Allergieën','Correspondentie','Problemen'];
+    let huidigeSectie = 'Dossier';
+    let huidigeTekst = '';
+
+    tekst.split('\n').forEach(lijn => {
+      const gevondenSectie = sectieTitels.find(s =>
+        lijn.toLowerCase().includes(s.toLowerCase()) && lijn.length < 50
+      );
+      if (gevondenSectie) {
+        if (huidigeTekst.trim()) secties[huidigeSectie] = huidigeTekst.trim();
+        huidigeSectie = gevondenSectie;
+        huidigeTekst = '';
+      } else {
+        huidigeTekst += lijn + '\n';
+      }
+    });
+    if (huidigeTekst.trim()) secties[huidigeSectie] = huidigeTekst.trim();
+
+    state.rawSecties = secties;
+    state.patiëntNaamRauw = '';
+    state.initialen = 'P.X.';
+    state.dossierBron = 'screenshot';
+    state.sectieAan = {};
+    const standaardAan = ['journaal','medicatie','voorgeschied','lab'];
+    for (const s of Object.keys(secties)) {
+      state.sectieAan[s] = standaardAan.some(kw => s.toLowerCase().includes(kw)) || Object.keys(secties).length <= 2;
+    }
+
+    state.screenshotAnalysed = true;
+    status.textContent = `✓ ${Object.keys(secties).length} secties herkend uit screenshot`;
+    btn.textContent = '🔍 Opnieuw analyseren';
+
+    bouwTransparantiePaneel();
+    clearError();
+
+  } catch(e) {
+    showError('Screenshot analyse mislukt: ' + e.message);
+    status.textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function clearScreenshot() {
+  state.screenshotDataUrl = null;
+  state.screenshotAnalysed = false;
+  document.getElementById('screenshotPreview').innerHTML = '';
+  document.getElementById('analyseScreenshotBtn').style.display = 'none';
+  document.getElementById('clearScreenshotBtn').style.display = 'none';
+  document.getElementById('screenshotStatus').textContent = '';
+}
+
+// ── PDF DOSSIER ───────────────────────────────────────────────
+function dzDropDossier(e) {
+  e.preventDefault();
+  document.getElementById('dropDossier').classList.remove('over');
+  const f = e.dataTransfer.files[0];
+  if (f?.type==='application/pdf') loadDossierPDF({target:{files:[f]}});
+  else showError('Alleen PDF bestanden.');
+}
+
+async function loadDossierPDF(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  document.getElementById('dropDossierLabel').innerHTML = '⏳ PDF lezen...';
+  clearError();
+
+  try {
+    const tekst = await leesPDF(file);
+    // Splits in ruwe secties op basis van keywords
+    const secties = parseerPDFTekst(tekst);
+    state.rawSecties = secties;
+    state.patiëntNaamRauw = '';
+    state.initialen = 'P.X.';
+    state.dossierBron = 'pdf';
+    state.sectieAan = {};
+    const standaardAan = ['journaal','medicatie','voorgeschied','lab'];
+    for (const s of Object.keys(secties)) {
+      state.sectieAan[s] = standaardAan.some(kw => s.toLowerCase().includes(kw)) || Object.keys(secties).length <= 2;
+    }
+    document.getElementById('dropDossierLabel').innerHTML = `📄 ${file.name} (${Math.round(tekst.length/1000)}k tekens)`;
+    document.getElementById('dropDossier').classList.add('loaded');
+    document.getElementById('dossierPillText').textContent = `${Object.keys(secties).length} secties gelezen`;
+    document.getElementById('dossierPill').style.display = 'flex';
+    bouwTransparantiePaneel();
+  } catch(e) {
+    showError('PDF leesfout: ' + e.message);
+    document.getElementById('dropDossierLabel').innerHTML = '📄 Sleep Medicom/Bricks PDF export hier';
+  }
+}
+
+function clearDossierPDF() {
+  state.rawSecties = {}; state.dossierBron = null;
+  document.getElementById('dropDossierLabel').innerHTML = '📄 Sleep Medicom/Bricks PDF export hier<br><small>of klik om te bladeren</small>';
+  document.getElementById('dropDossier').classList.remove('loaded');
+  document.getElementById('dossierPill').style.display = 'none';
+  document.getElementById('fileDossier').value = '';
+  document.getElementById('transparantiePaneel').style.display = 'none';
+}
+
+function parseerPDFTekst(tekst) {
+  const sectieMap = {
+    'Journaal':['journaal','soep','consult','icpc'],
+    'Medicatie':['medicatie','recept','geneesmiddel'],
+    'Voorgeschiedenis':['voorgeschied','anamnese'],
+    'Lab':['lab','bepaling','bloedwaarden','uitslag'],
+    'Correspondentie':['correspon','verwijz','specialist'],
+    'Metingen':['meting','bloeddruk','gewicht'],
+    'Allergieën':['allergie','intolerant'],
+  };
+  const secties = {};
+  let huidig = 'Dossier';
+  let buf = '';
+  tekst.split('\n').forEach(lijn => {
+    const lijnLow = lijn.toLowerCase();
+    let gevonden = false;
+    for (const [s, kws] of Object.entries(sectieMap)) {
+      if (kws.some(kw => lijnLow.includes(kw)) && lijn.length < 60) {
+        if (buf.trim()) secties[huidig] = (secties[huidig]||'') + buf;
+        huidig = s; buf = ''; gevonden = true; break;
+      }
+    }
+    if (!gevonden) buf += lijn + '\n';
+  });
+  if (buf.trim()) secties[huidig] = (secties[huidig]||'') + buf;
+  return secties;
+}
+
+// ── PDF lezen (generiek) ─────────────────────────────────────
+async function leesPDF(file) {
+  if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js niet geladen. Voer download-pdfjs.bat uit.');
+  const ab = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+  let tekst = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pg = await pdf.getPage(i);
+    const ct = await pg.getTextContent();
+    tekst += '\n--- Pagina ' + i + ' ---\n' + ct.items.map(it=>it.str).join(' ');
+  }
+  return tekst;
+}
+
+// ── VRAAG PDF ─────────────────────────────────────────────────
+function dzDropVraag(e) {
+  e.preventDefault();
+  document.getElementById('dropVraag').classList.remove('over');
+  const f = e.dataTransfer.files[0];
+  if (f?.type==='application/pdf') loadVraagPDF({target:{files:[f]}});
+  else showError('Alleen PDF bestanden.');
+}
+
+async function loadVraagPDF(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  document.getElementById('dropVraagLabel').innerHTML = '⏳ PDF lezen...';
+  clearError();
+  try {
+    const tekst = await leesPDF(file);
+    state.vraagText = tekst;
+    state.vraagFileName = file.name;
+    document.getElementById('dropVraagLabel').innerHTML = `📩 ${file.name}`;
+    document.getElementById('dropVraag').classList.add('loaded');
+    document.getElementById('vraagPillText').textContent = 'Vraag-PDF geladen';
+    document.getElementById('vraagPill').style.display = 'flex';
+  } catch(e) {
+    showError('PDF leesfout: ' + e.message);
+    document.getElementById('dropVraagLabel').innerHTML = '📩 Sleep vraag-PDF hier<br><small>Advocaat / SMA / Gemeente / UWV — of klik</small>';
+  }
+}
+
+function clearVraag() {
+  state.vraagText = null; state.vraagFileName = null;
+  document.getElementById('dropVraag').classList.remove('loaded');
+  document.getElementById('dropVraagLabel').innerHTML = '📩 Sleep vraag-PDF hier<br><small>Advocaat / SMA / Gemeente / UWV — of klik</small>';
+  document.getElementById('vraagPill').style.display = 'none';
+  document.getElementById('fileVraag').value = '';
+}
+
+// ── PRIVACY FILTER ────────────────────────────────────────────
+function berekenInitialen(naam) {
+  if (!naam) return 'P.X.';
+  const schoon = naam.replace(/\b(?:de heer|mevrouw|dhr\.|mw\.|dr\.|drs\.)\s*/gi,'').trim();
+  const tussenvoegsels = ['van','de','den','der','ten','ter','op','in','het',"'t",'le','la'];
+  return schoon.split(/\s+/)
+    .filter(d => !tussenvoegsels.includes(d.toLowerCase()) && d.length > 0)
+    .map(d => d[0].toUpperCase() + '.')
+    .join('') || 'P.X.';
+}
+
+const PRIVACY_PATRONEN = [
+  [/\b\d{9}\b/g,'[BSN]'],
+  [/\b\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}\b/g,'[DATUM]'],
+  [/\b\d{1,2}\s+(?:jan(?:uari)?|feb(?:ruari)?|mrt|maa?rt|apr(?:il)?|mei|jun(?:i)?|jul(?:i)?|aug(?:ustus)?|sep(?:tember)?|okt(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\b/gi,'[DATUM]'],
+  [/\b\d{4}\s?[A-Z]{2}\b/g,'[POSTCODE]'],
+  [/\b(?:06|0\d{1,2})[-\s]?\d{6,8}\b/g,'[TEL]'],
+  [/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g,'[EMAIL]'],
+  [/\b(?:de heer|mevrouw|dhr\.|mw\.|drs?\.|dr\.)\s+[A-Z][a-z]+(?:[\s\-][A-Z][a-z]+)*/g,'[NAAM]'],
+];
+
+function privacyFilter(tekst, volleNaam) {
+  let out = tekst;
+  if (volleNaam && volleNaam.length > 2) {
+    volleNaam.split(/\s+/).filter(d=>d.length>2).forEach(deel => {
+      out = out.replace(new RegExp(deel.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),'[NAAM]');
+    });
+  }
+  for (const [re,tag] of PRIVACY_PATRONEN) out = out.replace(re, tag);
+  return out;
+}
+
+// ── TRANSPARANTIE PANEEL ──────────────────────────────────────
+function bouwTransparantiePaneel() {
+  const paneel = document.getElementById('transparantiePaneel');
+
+  // Naam rij
+  const naamHtml = state.patiëntNaamRauw
+    ? `<span class="naam-gevonden">✕ ${state.patiëntNaamRauw}</span> → <span class="naam-initialen">${state.initialen}</span>`
+    : `<span style="color:var(--muted);font-size:10px">Geen naam gevonden — initialen: </span><span class="naam-initialen">${state.initialen}</span>`;
+  document.getElementById('tpNaam').innerHTML = '👤 Naam: ' + naamHtml;
+
+  // Sectie toggles
+  const container = document.getElementById('sectieToggles');
+  container.innerHTML = '';
+  for (const [sectie, tekst] of Object.entries(state.rawSecties)) {
+    const aan = state.sectieAan[sectie];
+    const row = document.createElement('div');
+    row.className = 'sectie-row';
+    row.innerHTML = `
+      <div class="sectie-info">
+        <span class="sectie-naam">${sectie}</span>
+        <span class="sectie-meta" id="meta-${sectie}">${Math.round(tekst.length/100)/10}k · ${aan?'✓ verstuurd':'✗ niet verstuurd'}</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" ${aan?'checked':''} onchange="toggleSectie('${sectie}',this.checked)">
+        <span class="slider"></span>
+      </label>`;
+    container.appendChild(row);
+  }
+
+  updatePreview();
+  paneel.style.display = 'block';
+}
+
+function toggleSectie(sectie, aan) {
+  state.sectieAan[sectie] = aan;
+  const meta = document.getElementById('meta-' + sectie);
+  if (meta) meta.textContent = Math.round((state.rawSecties[sectie]||'').length/100)/10 + 'k · ' + (aan?'✓ verstuurd':'✗ niet verstuurd');
+  updatePreview();
+}
+
+function bouwServerTekst() {
+  let out = `PATIËNT: ${state.initialen}\n\n`;
+  for (const [sectie, tekst] of Object.entries(state.rawSecties)) {
+    if (!state.sectieAan[sectie]) continue;
+    out += `══ ${sectie.toUpperCase()} ══\n${privacyFilter(tekst, state.patiëntNaamRauw)}\n\n`;
+  }
+  return out.trim();
+}
+
+function updatePreview() {
+  document.getElementById('previewText').textContent = bouwServerTekst();
+}
+
+function togglePreview() {
+  const c = document.getElementById('previewContent');
+  const btn = document.getElementById('previewToggleBtn');
+  const zichtbaar = c.style.display !== 'none';
+  c.style.display = zichtbaar ? 'none' : 'block';
+  btn.textContent = zichtbaar ? '👁 Toon preview' : '👁 Verberg preview';
+  if (!zichtbaar) updatePreview();
+}
+
+// ── BRIEFTYPE ─────────────────────────────────────────────────
+function selectType(el) {
+  document.querySelectorAll('.type-btn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  state.selectedType = el.dataset.type;
+}
+
+// ── API KEY ───────────────────────────────────────────────────
+async function loadApiKeyStatus() {
+  const { apiKey } = await new Promise(r => chrome.storage.local.get('apiKey', r));
+  if (apiKey) {
+    document.getElementById('apiSection').style.display = 'none';
+    document.getElementById('keyOk').style.display = 'block';
+  }
+}
+function saveKey() {
+  const key = document.getElementById('apiKey').value.trim();
+  if (!key.startsWith('sk-ant')) { showError('Ongeldige sleutel (begint met sk-ant-)'); return; }
+  chrome.storage.local.set({ apiKey: key }, () => {
+    document.getElementById('apiSection').style.display = 'none';
+    document.getElementById('keyOk').style.display = 'block';
+    clearError();
+  });
+}
+function resetKey() {
+  chrome.storage.local.remove('apiKey', () => {
+    document.getElementById('apiSection').style.display = 'block';
+    document.getElementById('keyOk').style.display = 'none';
+    document.getElementById('apiKey').value = '';
+  });
+}
+
+// ── GENEREER BRIEF ────────────────────────────────────────────
+const SYSTEM = {
+  advocaat:    'Je bent een Nederlandse huisarts die een medische informatiebrief schrijft aan een advocaat. Beantwoord alle gestelde vragen punt voor punt, juridisch-medisch correct en feitelijk. Verwijs naar de patiënt met de opgegeven initialen.',
+  sma:         'Je bent een Nederlandse huisarts die reageert op vragen van een sociaal-medisch adviseur. Beschrijf diagnose, behandelstatus, functionele beperkingen en prognose concreet. Verwijs naar de patiënt met de opgegeven initialen.',
+  gemeente:    'Je bent een Nederlandse huisarts die een verklaring schrijft voor de gemeente. Focus op zelfredzaamheid en functionele beperkingen. Verwijs naar de patiënt met de opgegeven initialen.',
+  verzekeraar: 'Je bent een Nederlandse huisarts die reageert op een verzekeraar. Wees precies over diagnose, behandeltraject en prognose. Verwijs naar de patiënt met de opgegeven initialen.',
+  uwv:         'Je bent een Nederlandse huisarts die reageert op UWV. Beschrijf medisch beeld, functionele mogelijkheden en beperkingen. Verwijs naar de patiënt met de opgegeven initialen.',
+  overig:      'Je bent een Nederlandse huisarts die een medische informatiebrief schrijft aan een externe instantie. Schrijf professioneel en feitelijk. Verwijs naar de patiënt met de opgegeven initialen.',
+};
+
+async function generate() {
+  clearError();
+  const heeftDossier = Object.keys(state.rawSecties).length > 0 && Object.values(state.sectieAan).some(v=>v);
+  if (!heeftDossier) { showError('Voer eerst een dossier in via Bricks, Screenshot of PDF (stap 01).'); return; }
+
+  const { apiKey } = await new Promise(r => chrome.storage.local.get('apiKey', r));
+  if (!apiKey) { showError('Stel eerst uw API sleutel in.'); return; }
+
+  const btn = document.getElementById('genBtn');
+  const outWrap = document.getElementById('outputWrap');
+  const outBody = document.getElementById('outputBody');
+  const extra = document.getElementById('extraInstructie').value.trim();
+
+  const dossierTekst = bouwServerTekst();
+  const vraagTekst = state.vraagText ? privacyFilter(state.vraagText, state.patiëntNaamRauw) : null;
+  const typeLabel = {advocaat:'advocaat',sma:'sociaal-medisch adviseur',gemeente:'gemeente',verzekeraar:'verzekeraar',uwv:'UWV',overig:'externe instantie'}[state.selectedType];
+
+  const userPrompt = vraagTekst
+    ? `INFORMATIEVRAAG VAN DE AANVRAGER (${typeLabel}):\n${'─'.repeat(40)}\n${vraagTekst}\n${'─'.repeat(40)}\n\nPATIËNTDOSSIER (gefilterd — initialen: ${state.initialen}):\n${'─'.repeat(40)}\n${dossierTekst}\n${'─'.repeat(40)}\n\nBeantwoord elke vraag concreet vanuit het dossier. Schrijf een formele informatiebrief als huisarts.${extra?'\n\nEXTRA INSTRUCTIE: '+extra:''}`
+    : `PATIËNTDOSSIER (gefilterd — initialen: ${state.initialen}):\n${'─'.repeat(40)}\n${dossierTekst}\n${'─'.repeat(40)}\n\nSchrijf een informatiebrief aan de ${typeLabel}.${extra?'\n\nINSTRUCTIE: '+extra:' Geef samenvatting van diagnose, behandelstatus en prognose.'}`;
+
+  btn.disabled = true;
+  btn.textContent = 'Bezig...';
+  outWrap.style.display = 'block';
+  outBody.innerHTML = '<div class="loading-row"><div class="spinner"></div><span>Brief wordt gegenereerd...</span></div>';
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        system: SYSTEM[state.selectedType],
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(()=>({}));
+      throw new Error(err.error?.message || `API fout ${resp.status}`);
+    }
+    const data = await resp.json();
+    outBody.textContent = data.content.map(b=>b.text||'').join('\n');
+  } catch(e) {
+    outWrap.style.display = 'none';
+    showError('Genereren mislukt: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✦ Genereer informatiebrief';
+  }
+}
+
+async function copyOutput() {
+  await navigator.clipboard.writeText(document.getElementById('outputBody').textContent);
+  const btns = document.querySelectorAll('.output-header button');
+  btns[0].textContent = '✓ Gekopieerd';
+  setTimeout(() => btns[0].textContent = 'Kopieer', 2000);
+}
+
+function clearAll() {
+  clearDossier(); clearVraag();
+  document.getElementById('outputWrap').style.display = 'none';
+  document.getElementById('extraInstructie').value = '';
+  clearError();
+}
+
+function showError(msg) { const el = document.getElementById('errorBar'); el.textContent = '⚠ '+msg; el.style.display='block'; }
+function clearError() { document.getElementById('errorBar').style.display='none'; }
