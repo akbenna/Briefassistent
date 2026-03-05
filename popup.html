@@ -2,6 +2,7 @@
 <html lang="nl">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=440">
 <title>Huisarts Brief Assistent</title>
 <link rel="stylesheet" href="popup.css">
 </head>
@@ -83,11 +84,7 @@
 
   <!-- TAB: PDF dossier -->
   <div id="pane-pdf-dossier" class="tab-pane" style="display:none">
-    <div class="drop-zone" id="dropDossier"
-         onclick="document.getElementById('fileDossier').click()"
-         ondragover="event.preventDefault();this.classList.add('over')"
-         ondragleave="this.classList.remove('over')"
-         ondrop="dzDropDossier(event)">
+    <div class="drop-zone" id="dropDossier">
       <input type="file" id="fileDossier" accept=".pdf" style="display:none" onchange="loadDossierPDF(event)">
       <span id="dropDossierLabel">📄 Sleep Medicom/Bricks PDF export hier<br><small>of klik om te bladeren</small></span>
     </div>
@@ -111,18 +108,46 @@
 
   <div class="divider"></div>
 
-  <!-- ═══ STAP 2: VRAAG-PDF ═══ -->
-  <div class="step-label"><span class="stepnum">02</span> VRAAG-PDF AANVRAGER <span class="optioneel">optioneel</span></div>
-  <div class="drop-zone" id="dropVraag"
-       onclick="document.getElementById('fileVraag').click()"
-       ondragover="event.preventDefault();this.classList.add('over')"
-       ondragleave="this.classList.remove('over')"
-       ondrop="dzDropVraag(event)">
-    <input type="file" id="fileVraag" accept=".pdf" style="display:none" onchange="loadVraagPDF(event)">
-    <span id="dropVraagLabel">📩 Sleep vraag-PDF hier<br><small>Advocaat / SMA / Gemeente / UWV — of klik</small></span>
+  <!-- ═══ STAP 2: VRAAG AANVRAGER ═══ -->
+  <div class="step-label"><span class="stepnum">02</span> BRIEF / VRAAG AANVRAGER <span class="optioneel">optioneel</span></div>
+
+  <!-- Vraag methode tabs -->
+  <div class="vraag-tabs">
+    <button class="vtab active" id="vtab-pdf" onclick="switchVraagTab('pdf')">📄 PDF uploaden</button>
+    <button class="vtab" id="vtab-screenshot" onclick="switchVraagTab('screenshot')">🖥 Screenshot</button>
   </div>
-  <div class="file-pill" id="vraagPill" style="display:none">
-    <span id="vraagPillText"></span><button onclick="clearVraag()">✕</button>
+
+  <!-- Vraag TAB: PDF -->
+  <div id="vpane-pdf" class="tab-pane">
+    <div class="drop-zone" id="dropVraag">
+      <input type="file" id="fileVraag" accept=".pdf" style="display:none" onchange="loadVraagPDF(event)">
+      <span id="dropVraagLabel">📩 Sleep vraag-PDF hier<br><small>Advocaat / SMA / Gemeente / UWV — of klik</small></span>
+    </div>
+    <div class="file-pill" id="vraagPill" style="display:none">
+      <span id="vraagPillText"></span><button onclick="clearVraag()">✕</button>
+    </div>
+  </div>
+
+  <!-- Vraag TAB: Screenshot -->
+  <div id="vpane-screenshot" class="tab-pane" style="display:none">
+    <div class="screenshot-area" id="vraagScreenshotArea">
+      <p class="card-icon">📸</p>
+      <p class="card-title">Screenshot van brief plakken</p>
+      <p class="card-sub">
+        1. Maak screenshot van de brief/vraag<br>
+        &nbsp;&nbsp;&nbsp;(PrintScreen of Knipprogramma)<br>
+        2. Klik in dit vak<br>
+        3. Druk <strong>Ctrl+V</strong>
+      </p>
+      <div id="vraagScreenshotPreview"></div>
+    </div>
+    <div class="row-btns" style="margin-top:6px">
+      <button class="btn primary" id="analyseVraagScreenshotBtn" onclick="analyseVraagScreenshot()" style="display:none">
+        🔍 Analyseer screenshot
+      </button>
+      <button class="btn ghost" id="clearVraagScreenshotBtn" onclick="clearVraagScreenshot()" style="display:none">Wis</button>
+    </div>
+    <div id="vraagScreenshotStatus" class="card-sub" style="margin-top:5px;text-align:center"></div>
   </div>
 
   <div class="divider"></div>
