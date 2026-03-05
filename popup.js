@@ -41,6 +41,57 @@ function getApiKey() {
 
 // ── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  // Alle event listeners (geen inline handlers — CSP MV3)
+  $('avgBtn').addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('avg-verantwoording.html') }));
+
+  // Stap 1: dossier tabs
+  $('tab-bricks').addEventListener('click', () => switchTab('bricks'));
+  $('tab-screenshot').addEventListener('click', () => switchTab('screenshot'));
+  $('tab-pdf-dossier').addEventListener('click', () => switchTab('pdf-dossier'));
+
+  // Bricks scrape
+  $('scrapeBtn').addEventListener('click', scrapeDossier);
+  $('clearScrapeBtn').addEventListener('click', clearDossier);
+
+  // Screenshot dossier
+  $('analyseScreenshotBtn').addEventListener('click', analyseScreenshot);
+  $('clearScreenshotBtn').addEventListener('click', clearScreenshot);
+
+  // PDF dossier file input
+  $('fileDossier').addEventListener('change', loadDossierPDF);
+  $('clearDossierPDFBtn').addEventListener('click', clearDossierPDF);
+
+  // Transparantie preview
+  $('previewToggleBtn').addEventListener('click', togglePreview);
+
+  // Stap 2: vraag tabs
+  $('vtab-pdf').addEventListener('click', () => switchVraagTab('pdf'));
+  $('vtab-screenshot').addEventListener('click', () => switchVraagTab('screenshot'));
+
+  // Vraag PDF file input
+  $('fileVraag').addEventListener('change', loadVraagPDF);
+  $('clearVraagBtn').addEventListener('click', clearVraag);
+
+  // Vraag screenshot
+  $('analyseVraagScreenshotBtn').addEventListener('click', analyseVraagScreenshot);
+  $('clearVraagScreenshotBtn').addEventListener('click', clearVraagScreenshot);
+
+  // Brieftype knoppen
+  $('typeGrid').addEventListener('click', (e) => {
+    const btn = e.target.closest('.type-btn');
+    if (btn) selectType(btn);
+  });
+
+  // API key
+  $('saveKeyBtn').addEventListener('click', saveKey);
+  $('resetKeyBtn').addEventListener('click', resetKey);
+
+  // Genereer + output
+  $('genBtn').addEventListener('click', generate);
+  $('copyBtn').addEventListener('click', copyOutput);
+  $('clearAllBtn').addEventListener('click', clearAll);
+
+  // Setup
   await checkBricks();
   await loadApiKeyStatus();
   setupScreenshotPaste();
