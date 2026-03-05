@@ -19,6 +19,9 @@ const state = {
   vraagScreenshotDataUrl: null,
   vraagScreenshotAnalysed: false,
   selectedType: 'advocaat',
+  // Verwijzing state
+  selectedSpec: 'cardiologie',
+  selectedUrgentie: 'regulier',
 };
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -43,6 +46,10 @@ function getApiKey() {
 document.addEventListener('DOMContentLoaded', async () => {
   // Alle event listeners (geen inline handlers — CSP MV3)
   $('avgBtn').addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('avg-verantwoording.html') }));
+
+  // Hoofdtabs (Brief / Verwijzing)
+  $('htab-brief').addEventListener('click', () => switchHoofdTab('brief'));
+  $('htab-verwijzing').addEventListener('click', () => switchHoofdTab('verwijzing'));
 
   // Stap 1: dossier tabs
   $('tab-bricks').addEventListener('click', () => switchTab('bricks'));
@@ -81,6 +88,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     const btn = e.target.closest('.type-btn');
     if (btn) selectType(btn);
   });
+
+  // Verwijzing: specialisme knoppen
+  $('specGrid').addEventListener('click', (e) => {
+    const btn = e.target.closest('.type-btn');
+    if (btn) selectSpec(btn);
+  });
+
+  // Verwijzing: urgentie knoppen
+  $('urgentieRow').addEventListener('click', (e) => {
+    const btn = e.target.closest('.urg-btn');
+    if (btn) selectUrgentie(btn);
+  });
+
+  // Verwijzing: genereer
+  $('genVerwBtn').addEventListener('click', generateVerwijzing);
 
   // API key
   $('saveKeyBtn').addEventListener('click', saveKey);
@@ -783,7 +805,7 @@ function togglePreview() {
 
 // ── BRIEFTYPE ─────────────────────────────────────────────────
 function selectType(el) {
-  document.querySelectorAll('.type-btn').forEach(b=>b.classList.remove('active'));
+  $('typeGrid').querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
   el.classList.add('active');
   state.selectedType = el.dataset.type;
 }
@@ -931,6 +953,166 @@ function clearAll() {
   $('outputWrap').style.display = 'none';
   $('extraInstructie').value = '';
   clearError();
+}
+
+// ── HOOFDTAB WISSELEN ─────────────────────────────────────────
+function switchHoofdTab(tab) {
+  ['brief','verwijzing'].forEach(t => {
+    $('htab-' + t).classList.toggle('active', t === tab);
+    $('page-' + t).style.display = t === tab ? 'block' : 'none';
+  });
+  // Update verwijzing dossier-status wanneer we erheen navigeren
+  if (tab === 'verwijzing') updateVerwDossierStatus();
+}
+
+function updateVerwDossierStatus() {
+  const heeftDossier = Object.keys(state.rawSecties).length > 0;
+  $('verwDossierStatus').style.display = heeftDossier ? 'none' : 'block';
+  $('verwDossierOk').style.display = heeftDossier ? 'block' : 'none';
+  if (heeftDossier) {
+    const totChars = Object.values(state.rawSecties).join('').length;
+    $('verwDossierMeta').textContent =
+      Object.keys(state.rawSecties).join(' · ') + ' — ' + Math.round(totChars/1000) + 'k tekens';
+  }
+}
+
+// ── VERWIJZING: SPECIALISME ──────────────────────────────────
+function selectSpec(el) {
+  $('specGrid').querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  state.selectedSpec = el.dataset.spec;
+  $('specAnders').style.display = el.dataset.spec === 'overig' ? 'block' : 'none';
+}
+
+function selectUrgentie(el) {
+  $('urgentieRow').querySelectorAll('.urg-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  state.selectedUrgentie = el.dataset.urg;
+}
+
+// ── VERWIJZING: GENEREER (met Haiku — goedkoop) ─────────────
+const VERWIJZING_SYSTEM = `Je bent een Nederlandse huisarts die een verwijsbrief schrijft naar een medisch specialist.
+Schrijf een professionele, bondige verwijsbrief in het standaard Nederlandse verwijsformaat:
+- Geachte collega
+- Reden van verwijzing
+- Relevante voorgeschiedenis (kort, uit dossier)
+- Huidige medicatie (indien relevant)
+- Relevante bevindingen / labwaarden
+- Vraagstelling aan specialist
+- Met vriendelijke groet
+
+Gebruik de patiënt-initialen, nooit de volledige naam. Wees concreet en beknopt.
+Vermeld alleen informatie die relevant is voor het betreffende specialisme.`;
+
+const SPEC_LABELS = {
+  cardiologie: 'cardioloog',
+  neurologie: 'neuroloog',
+  orthopedie: 'orthopedisch chirurg',
+  interne: 'internist',
+  dermatologie: 'dermatoloog',
+  psychiatrie: 'psychiater',
+  chirurgie: 'chirurg',
+  ggz: 'GGZ',
+  overig: null,
+};
+
+async function generateVerwijzing() {
+  clearError();
+  const heeftDossier = Object.keys(state.rawSecties).length > 0 && Object.values(state.sectieAan).some(v => v);
+  if (!heeftDossier) { showError('Laad eerst een dossier via de Informatiebrief-tab.'); return; }
+
+  const apiKey = await getApiKey();
+  if (!apiKey) { showError('Stel eerst uw API sleutel in.'); return; }
+
+  const reden = $('verwReden').value.trim();
+  if (!reden) { showError('Vul een verwijsreden / vraagstelling in.'); return; }
+
+  const spec = state.selectedSpec === 'overig'
+    ? ($('specVrij').value.trim() || 'medisch specialist')
+    : (SPEC_LABELS[state.selectedSpec] || state.selectedSpec);
+  const urgentie = state.selectedUrgentie;
+  const extra = $('verwExtra').value.trim();
+  const dossierTekst = bouwServerTekst();
+  const sep = '─'.repeat(40);
+
+  const userPrompt = `VERWIJZING NAAR: ${spec}
+URGENTIE: ${urgentie}
+VERWIJSREDEN: ${reden}${extra ? '\nEXTRA CONTEXT: ' + extra : ''}
+
+PATIËNTDOSSIER (gefilterd — initialen: ${state.initialen}):
+${sep}
+${dossierTekst}
+${sep}
+
+Schrijf een verwijsbrief aan de ${spec}. Focus op informatie die relevant is voor ${spec}.
+Urgentieniveau: ${urgentie}.`;
+
+  const btn = $('genVerwBtn');
+  const outWrap = $('outputWrap');
+  const outBody = $('outputBody');
+
+  btn.disabled = true;
+  btn.textContent = 'Bezig...';
+  $('outputTitle').textContent = '✓ Verwijsbrief gegenereerd';
+  outWrap.style.display = 'block';
+  outBody.textContent = '';
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1200,
+        stream: true,
+        system: VERWIJZING_SYSTEM,
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error?.message || `API fout ${resp.status}`);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6);
+        if (data === '[DONE]') continue;
+        try {
+          const evt = JSON.parse(data);
+          if (evt.type === 'content_block_delta' && evt.delta?.text) {
+            outBody.textContent += evt.delta.text;
+            outBody.scrollTop = outBody.scrollHeight;
+          }
+        } catch { /* skip */ }
+      }
+    }
+
+  } catch (e) {
+    outWrap.style.display = 'none';
+    showError('Genereren mislukt: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✦ Genereer verwijsbrief';
+  }
 }
 
 function showError(msg) { const el = $('errorBar'); el.textContent = '⚠ '+msg; el.style.display='block'; }
