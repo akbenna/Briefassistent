@@ -1,4 +1,4 @@
-// popup.js v5 — Geoptimaliseerd: streaming, privacy fix, XSS-bescherming
+// popup.js v5 — Geoptimaliseerd: streaming, privacy fix, XSS-bescherming, responsive
 
 // ── PDF.js worker via extensie URL ───────────────────────────
 if (typeof pdfjsLib !== 'undefined') {
@@ -16,6 +16,8 @@ const state = {
   screenshotAnalysed: false,
   vraagText: null,
   vraagFileName: null,
+  vraagScreenshotDataUrl: null,
+  vraagScreenshotAnalysed: false,
   selectedType: 'advocaat',
 };
 
@@ -42,7 +44,78 @@ document.addEventListener('DOMContentLoaded', async () => {
   await checkBricks();
   await loadApiKeyStatus();
   setupScreenshotPaste();
+  setupVraagScreenshotPaste();
+  setupDropZones();
 });
+
+// ── Drop zones — JS event listeners (robuuster dan inline) ───
+function setupDropZones() {
+  // Dossier PDF drop zone
+  const dropDossier = $('dropDossier');
+  if (dropDossier) {
+    dropDossier.addEventListener('click', (e) => {
+      if (e.target.tagName !== 'INPUT') $('fileDossier').click();
+    });
+    dropDossier.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropDossier.classList.add('over');
+    });
+    dropDossier.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropDossier.classList.add('over');
+    });
+    dropDossier.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dropDossier.classList.remove('over');
+    });
+    dropDossier.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropDossier.classList.remove('over');
+      const f = e.dataTransfer.files[0];
+      if (f && f.type === 'application/pdf') {
+        loadDossierPDF({ target: { files: [f] } });
+      } else if (f) {
+        showError('Alleen PDF bestanden worden geaccepteerd.');
+      }
+    });
+  }
+
+  // Vraag PDF drop zone
+  const dropVraag = $('dropVraag');
+  if (dropVraag) {
+    dropVraag.addEventListener('click', (e) => {
+      if (e.target.tagName !== 'INPUT') $('fileVraag').click();
+    });
+    dropVraag.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropVraag.classList.add('over');
+    });
+    dropVraag.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropVraag.classList.add('over');
+    });
+    dropVraag.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dropVraag.classList.remove('over');
+    });
+    dropVraag.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropVraag.classList.remove('over');
+      const f = e.dataTransfer.files[0];
+      if (f && f.type === 'application/pdf') {
+        loadVraagPDF({ target: { files: [f] } });
+      } else if (f) {
+        showError('Alleen PDF bestanden worden geaccepteerd.');
+      }
+    });
+  }
+}
 
 // ── Bricks check ──────────────────────────────────────────────
 async function checkBricks() {
@@ -80,11 +153,19 @@ async function checkBricks() {
   }
 }
 
-// ── Tab wisselen ──────────────────────────────────────────────
+// ── Tab wisselen (Stap 1: dossier) ───────────────────────────
 function switchTab(tab) {
   ['bricks','screenshot','pdf-dossier'].forEach(t => {
     $('tab-' + t).classList.toggle('active', t === tab);
     $('pane-' + t).style.display = t === tab ? 'block' : 'none';
+  });
+}
+
+// ── Tab wisselen (Stap 2: vraag/aanvrager) ───────────────────
+function switchVraagTab(tab) {
+  ['pdf','screenshot'].forEach(t => {
+    $('vtab-' + t).classList.toggle('active', t === tab);
+    $('vpane-' + t).style.display = t === tab ? 'block' : 'none';
   });
 }
 
@@ -189,43 +270,74 @@ function clearDossier() {
   clearScreenshot();
 }
 
-// ── SCREENSHOT ────────────────────────────────────────────────
+// ── SCREENSHOT (dossier) ─────────────────────────────────────
 function setupScreenshotPaste() {
   const area = $('screenshotArea');
   area.addEventListener('click', () => area.focus());
   area.setAttribute('tabindex', '0');
 
   document.addEventListener('paste', (e) => {
-    if ($('pane-screenshot').style.display === 'none') return;
+    // Dossier screenshot — alleen als dat pane zichtbaar is
+    if ($('pane-screenshot').style.display !== 'none') {
+      handleScreenshotPaste(e, 'dossier');
+      return;
+    }
+    // Vraag screenshot — alleen als dat pane zichtbaar is
+    if ($('vpane-screenshot').style.display !== 'none') {
+      handleScreenshotPaste(e, 'vraag');
+      return;
+    }
+  });
+}
 
-    const items = e.clipboardData?.items;
-    if (!items) return;
+function handleScreenshotPaste(e, type) {
+  const items = e.clipboardData?.items;
+  if (!items) return;
 
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        const blob = item.getAsFile();
-        const reader = new FileReader();
-        reader.onload = (ev) => {
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      const blob = item.getAsFile();
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        if (type === 'dossier') {
           state.screenshotDataUrl = ev.target.result;
           state.screenshotAnalysed = false;
-
           const preview = $('screenshotPreview');
           const img = document.createElement('img');
           img.src = ev.target.result;
           img.style.cssText = 'max-width:100%;max-height:200px;border-radius:5px;margin-top:8px';
           preview.innerHTML = '';
           preview.appendChild(img);
-
           $('analyseScreenshotBtn').style.display = 'block';
           $('clearScreenshotBtn').style.display = 'block';
           $('screenshotStatus').textContent = '✓ Screenshot geplakt — klik Analyseer';
-        };
-        reader.readAsDataURL(blob);
-        e.preventDefault();
-        return;
-      }
+        } else {
+          state.vraagScreenshotDataUrl = ev.target.result;
+          state.vraagScreenshotAnalysed = false;
+          const preview = $('vraagScreenshotPreview');
+          const img = document.createElement('img');
+          img.src = ev.target.result;
+          img.style.cssText = 'max-width:100%;max-height:200px;border-radius:5px;margin-top:8px';
+          preview.innerHTML = '';
+          preview.appendChild(img);
+          $('analyseVraagScreenshotBtn').style.display = 'block';
+          $('clearVraagScreenshotBtn').style.display = 'block';
+          $('vraagScreenshotStatus').textContent = '✓ Screenshot geplakt — klik Analyseer';
+        }
+      };
+      reader.readAsDataURL(blob);
+      e.preventDefault();
+      return;
     }
-  });
+  }
+}
+
+// ── Vraag screenshot setup (click focus) ─────────────────────
+function setupVraagScreenshotPaste() {
+  const area = $('vraagScreenshotArea');
+  if (!area) return;
+  area.addEventListener('click', () => area.focus());
+  area.setAttribute('tabindex', '0');
 }
 
 async function analyseScreenshot() {
@@ -300,6 +412,87 @@ Laat GEEN informatie weg. Geef de output als platte tekst per sectie.` }
   }
 }
 
+// ── VRAAG SCREENSHOT ANALYSE ─────────────────────────────────
+async function analyseVraagScreenshot() {
+  if (!state.vraagScreenshotDataUrl) return;
+
+  const btn = $('analyseVraagScreenshotBtn');
+  const status = $('vraagScreenshotStatus');
+  btn.disabled = true;
+  btn.textContent = '⏳ Analyseren...';
+  status.textContent = 'AI leest de brief/vraag...';
+  clearError();
+
+  const apiKey = await getApiKey();
+  if (!apiKey) { showError('Stel eerst uw API sleutel in.'); btn.disabled=false; btn.textContent='🔍 Analyseer screenshot'; return; }
+
+  try {
+    const base64 = state.vraagScreenshotDataUrl.split(',')[1];
+    const mediaType = state.vraagScreenshotDataUrl.match(/data:([^;]+)/)?.[1] || 'image/png';
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 3000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+            { type: 'text', text: `Dit is een screenshot van een brief of vragenlijst van een advocaat, gemeente, UWV, verzekeraar of sociaal-medisch adviseur.
+Extraheer alle tekst die zichtbaar is, inclusief:
+- Vragen die beantwoord moeten worden (genummerd indien aanwezig)
+- Context over de zaak
+- Namen van afzenders/ontvangers
+- Datums en referentienummers
+Schrijf alle tekst letterlijk over zoals zichtbaar. Laat GEEN informatie weg.
+Geef de output als platte tekst.` }
+          ]
+        }]
+      })
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(()=>({}));
+      throw new Error(err.error?.message || `API fout ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    const tekst = data.content.map(b => b.text||'').join('\n');
+
+    state.vraagText = tekst;
+    state.vraagFileName = 'screenshot-vraag';
+    state.vraagScreenshotAnalysed = true;
+
+    status.textContent = '✓ Tekst uit screenshot geëxtraheerd';
+    btn.textContent = '🔍 Opnieuw analyseren';
+    clearError();
+
+  } catch(e) {
+    showError('Screenshot analyse mislukt: ' + e.message);
+    status.textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function clearVraagScreenshot() {
+  state.vraagScreenshotDataUrl = null;
+  state.vraagScreenshotAnalysed = false;
+  state.vraagText = null;
+  state.vraagFileName = null;
+  $('vraagScreenshotPreview').innerHTML = '';
+  $('analyseVraagScreenshotBtn').style.display = 'none';
+  $('clearVraagScreenshotBtn').style.display = 'none';
+  $('vraagScreenshotStatus').textContent = '';
+}
+
 function parseerAISecties(tekst) {
   const secties = {};
   const sectieTitels = ['Journaal','Medicatie','Voorgeschiedenis','Lab','Metingen','Allergieën','Correspondentie','Problemen'];
@@ -330,14 +523,6 @@ function clearScreenshot() {
 }
 
 // ── PDF DOSSIER ───────────────────────────────────────────────
-function dzDropDossier(e) {
-  e.preventDefault();
-  $('dropDossier').classList.remove('over');
-  const f = e.dataTransfer.files[0];
-  if (f?.type==='application/pdf') loadDossierPDF({target:{files:[f]}});
-  else showError('Alleen PDF bestanden.');
-}
-
 async function loadDossierPDF(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -417,14 +602,6 @@ async function leesPDF(file) {
 }
 
 // ── VRAAG PDF ─────────────────────────────────────────────────
-function dzDropVraag(e) {
-  e.preventDefault();
-  $('dropVraag').classList.remove('over');
-  const f = e.dataTransfer.files[0];
-  if (f?.type==='application/pdf') loadVraagPDF({target:{files:[f]}});
-  else showError('Alleen PDF bestanden.');
-}
-
 async function loadVraagPDF(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -699,7 +876,7 @@ async function copyOutput() {
 }
 
 function clearAll() {
-  clearDossier(); clearVraag();
+  clearDossier(); clearVraag(); clearVraagScreenshot();
   $('outputWrap').style.display = 'none';
   $('extraInstructie').value = '';
   clearError();
